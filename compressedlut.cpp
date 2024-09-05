@@ -20,9 +20,8 @@ int main(int argc, char* argv[])
         inputFile.close();
     }
 
-    bool is_table; 
+    bool is_table = true; 
     string table_path;
-    string equation; int f_in = -1; int f_out = -1;
     string table_name = "compressedlut", output_path = ".";
     compressedlut::struct_configs configs = {2, 1, 1, 1};
 
@@ -37,15 +36,7 @@ int main(int argc, char* argv[])
         string current_arg = argv[i];
         
         if (current_arg == "-table") {
-            is_table = 1;
             table_path = argv[i + 1];
-        } else if (current_arg == "-function") {
-            is_table = 0;
-            equation = argv[i + 1];
-        } else if (current_arg == "-f_in") {
-            f_in = stoi(argv[i + 1]);
-        } else if (current_arg == "-f_out") {
-            f_out = stoi(argv[i + 1]);
         } else if (current_arg == "-name") {
             table_name = argv[i + 1];
         } else if (current_arg == "-output") {
@@ -69,71 +60,27 @@ int main(int argc, char* argv[])
     vector<long int> table_data;
     bool is_signed = false;
 
-    if(is_table)
+    ifstream table_file(table_path);
+    if(table_file.is_open()) 
     {
-        ifstream table_file(table_path);
-        if(table_file.is_open()) 
-        {
-            string line;
-            while (getline(table_file, line)) {
-                long int value;
-                value = stol(line, 0, 16);
-                table_data.push_back(value);
-            }
-            table_file.close();
+        string line;
+        while (getline(table_file, line)) {
+            long int value;
+            value = stol(line, 0, 16);
+            table_data.push_back(value);
+        }
+        table_file.close();
 
-            if(table_data.size() != (1 << compressedlut::bit_width(table_data.size()-1)))
-            {
-                cerr << "Error: The table size must be of a power of 2." << endl;
-                return 1;
-            }
-        } 
-        else
-        { 
-            cerr << "Error: Could not open the table file." << endl;
+        if(table_data.size() != (1 << compressedlut::bit_width(table_data.size()-1)))
+        {
+            cerr << "Error: The table size must be a power of 2." << endl;
             return 1;
         }
-    }
+    } 
     else
-    {
-        if(f_in < 0 || f_out < 0)
-        {
-            compressedlut::help();
-            return 1;
-        }
-
-        double x, y;
-
-        exprtk::symbol_table<double> symbol_table;
-        symbol_table.add_variable("x", x);
-        symbol_table.add_constants();
-        exprtk::expression<double> expression;
-        expression.register_symbol_table(symbol_table);
-        exprtk::parser<double> parser;
-        parser.compile(equation, expression);
-
-        for(x = 0; x < 1; x = x + 1./(1 << f_in)) {
-            y = expression.value();
-            if(!isfinite(y))
-            {
-                cerr << "Error: The function is undefined at one or more points." << endl;
-                return 1; 
-            }
-            table_data.push_back(round(y * (1 << f_out)));
-        }
-
-        long int min_value = *min_element(table_data.begin(), table_data.end());
-        if(min_value < 0)
-        {
-            is_signed = true;
-            long int max_value = *max_element(table_data.begin(), table_data.end());
-            int w = compressedlut::bit_width_signed(min_value, max_value);
-            for(int i =0; i < table_data.size(); i++)
-            {
-                if(table_data.at(i) < 0)
-                    table_data.at(i) += ((long int)1 << w);
-            }
-        }
+    { 
+        cerr << "Error: Could not open the table file." << endl;
+        return 1;
     }
 
     long int initial_size;
@@ -147,21 +94,10 @@ int main(int argc, char* argv[])
 
         int w_in = compressedlut::bit_width(table_data.size()-1);
         int w_out = compressedlut::bit_width(*max_element(table_data.begin(), table_data.end()));
-        if(is_table)
-        {
-            cout << "\nInformation: The input and output bit width are as follows." << endl;
-            cout << "--> Input Bit Width: " << w_in << endl;
-            cout << "--> Output Bit Width: " << w_out  << endl;
-        }
-        else
-        {
-            cout << "\nInformation: The input and output values must be interpreted as follows." << endl;
-            cout << "--> Input Format: Fixed Point <Unsigned, " << w_in << ", " << f_in << ">" << endl;
-            if(is_signed)
-                cout << "--> Output Format: Fixed Point <Signed, " << w_out << ", " << f_out << ">" << endl;
-            else
-                cout << "--> Output Format: Fixed Point <Unsigned, " << w_out << ", " << f_out << ">" << endl;
-        }
+
+        cout << "\nInformation: The input and output bit width are as follows." << endl;
+        cout << "--> Input Bit Width: " << w_in << endl;
+        cout << "--> Output Bit Width: " << w_out  << endl;
 
         cout << "\nInformation: The results are as follows." << endl;
         for(int i = 0; i < final_size.size(); i++)
@@ -173,7 +109,6 @@ int main(int argc, char* argv[])
     }
 
     return 0;
-
 }
 
 void compressedlut::compressedlut(const vector<long int>& table_data, const string& table_name, const string& output_path, struct struct_configs configs, long int* initial_size, vector<long int>& final_size)
@@ -183,6 +118,8 @@ void compressedlut::compressedlut(const vector<long int>& table_data, const stri
     vector<vector<long int>> all_t_lb, all_t_ust, all_t_bias, all_t_idx, all_t_rsh;
     
     vector<long int> t = table_data;
+
+    int wo_ust = bit_width(*max_element(t.begin(), t.end()));
 
     while (true) 
     {
@@ -211,7 +148,7 @@ void compressedlut::compressedlut(const vector<long int>& table_data, const stri
             for(int w_s = configs.mdbw; w_s < w_in ; w_s++)
             {
                 vector<long int> t_ust, t_bias, t_idx, t_rsh;
-                long int cost_t_hb = hb_compression(configs.ssc,t_hb, w_s, t_ust, t_bias, t_idx, t_rsh);
+                long int cost_t_hb = hb_compression(configs.ssc,t_hb, w_s, t_ust, t_bias, t_idx, t_rsh, wo_ust, w_l);
                 if((cost_t_hb + cost_t_lb) < best_cost)
                 {
                     compressed = 1;
@@ -260,19 +197,17 @@ void compressedlut::compressedlut(const vector<long int>& table_data, const stri
         for(int i = 0; i < all_w_in.size(); i++)
         {
             string rtl_file_path = output_path + "/" + table_name + "_v" + to_string(i + 1) + ".v";
-            string hls_file_path = output_path + "/" + table_name + "_v" + to_string(i + 1) + ".cpp";
-            rtl(rtl_file_path, table_name, all_w_in, all_w_out, all_w_l, all_w_s, all_t_lb, all_t_ust, all_t_bias, all_t_idx, all_t_rsh, i + 1);
-            hls(hls_file_path, table_name, all_w_in, all_w_out, all_w_l, all_w_s, all_t_lb, all_t_ust, all_t_bias, all_t_idx, all_t_rsh, i + 1);
+            rtl(rtl_file_path, table_name, all_w_in, all_w_out, all_w_l, all_w_s, all_t_lb, all_t_ust, all_t_bias, all_t_idx, all_t_rsh, i + 1, wo_ust);
         }
     }
 }
 
-long int compressedlut::hb_compression(bool ssc, const vector<long int>& t_hb, int w_s, vector<long int>& t_ust, vector<long int>& t_bias, vector<long int>& t_idx, vector<long int>& t_rsh)
+long int compressedlut::hb_compression(bool ssc, const vector<long int>& t_hb, int w_s, vector<long int>& t_ust, vector<long int>& t_bias, vector<long int>& t_idx, vector<long int>& t_rsh, const int wo_ust, const int w_l)
 {
     const int w_in = bit_width(t_hb.size()-1);
-    const int w_out = bit_width(*max_element(t_hb.begin(), t_hb.end()));
+    const int w_out = wo_ust;
     const long int num_sub_table = (1 << (w_in - w_s));
-    const  int len_sub_table = (1 << w_s);
+    const int len_sub_table = (1 << w_s);
 
     vector<long int> t_st(num_sub_table*len_sub_table);
 
@@ -288,7 +223,10 @@ long int compressedlut::hb_compression(bool ssc, const vector<long int>& t_hb, i
     {
         t_ust = t_st;
         int w_bias = bit_width(*max_element(t_bias.begin(), t_bias.end()));
-        int w_ust =  bit_width(*max_element(t_ust.begin(), t_ust.end()));
+        if (w_bias != 0) {
+            w_bias = wo_ust - w_l;
+        }
+        int w_ust = wo_ust - w_l;
         return (1 << w_in) * w_ust + (1 << (w_in - w_s)) * w_bias; 
     }
     else
@@ -397,14 +335,17 @@ long int compressedlut::hb_compression(bool ssc, const vector<long int>& t_hb, i
 
     }
 
-    int w_ust = bit_width(*max_element(t_ust.begin(), t_ust.end()));
+    int w_ust = wo_ust - w_l;
     int w_bias = bit_width(*max_element(t_bias.begin(), t_bias.end()));
+    if (w_bias != 0) {
+        w_bias = wo_ust - w_l;
+    }
     int w_rsh = bit_width(*max_element(t_rsh.begin(), t_rsh.end()));
     int w_idx = bit_width(*max_element(t_idx.begin(), t_idx.end()));
     return t_ust.size() * w_ust + (1 << (w_in - w_s)) * (w_bias + w_rsh + w_idx);
 }
 
-void compressedlut::rtl(const string& file_path, const string& table_name, const vector<int>& all_w_in, const vector<int>& all_w_out, const vector<int>& all_w_l, const vector<int>& all_w_s, const vector<vector<long int>>& all_t_lb, const vector<vector<long int>>& all_t_ust, const vector<vector<long int>>& all_t_bias, const vector<vector<long int>>& all_t_idx, const vector<vector<long int>>& all_t_rsh, int max_level)
+void compressedlut::rtl(const string& file_path, const string& table_name, const vector<int>& all_w_in, const vector<int>& all_w_out, const vector<int>& all_w_l, const vector<int>& all_w_s, const vector<vector<long int>>& all_t_lb, const vector<vector<long int>>& all_t_ust, const vector<vector<long int>>& all_t_bias, const vector<vector<long int>>& all_t_idx, const vector<vector<long int>>& all_t_rsh, int max_level, const int wo_ust)
 {
     ofstream file_init(file_path);
     file_init.close();
@@ -418,40 +359,44 @@ void compressedlut::rtl(const string& file_path, const string& table_name, const
         const vector<long int> t_rsh = all_t_rsh.at(level-1);
 
         const int w_in = all_w_in.at(level-1);
-        const int w_out = all_w_out.at(level-1);
+        const int w_out = wo_ust;
         const int w_l = all_w_l.at(level-1);
         const int w_s = all_w_s.at(level-1);
 
         const int w_lb = (t_lb.size() == 0)? 0 : bit_width(*max_element(t_lb.begin(), t_lb.end()));
-        const int w_ust = (t_ust.size() == 0)? 0 : bit_width(*max_element(t_ust.begin(), t_ust.end()));
-        const int w_bias = (t_bias.size() == 0)? 0 : bit_width(*max_element(t_bias.begin(), t_bias.end()));
+        int w_ust = wo_ust;
+        if (w_l != 0) {
+            w_ust = w_ust - w_l;
+        }
+        int w_bias = (t_bias.size() == 0)? 0 : bit_width(*max_element(t_bias.begin(), t_bias.end()));
+        if (w_bias != 0) {
+            w_bias = w_ust;
+        }
         const int w_idx = (t_idx.size() == 0)? 0 : bit_width(*max_element(t_idx.begin(), t_idx.end()));
         const int w_rsh = (t_rsh.size() == 0)? 0 : bit_width(*max_element(t_rsh.begin(), t_rsh.end()));
 
-        if(w_ust != 0) 
-        {
+        if (w_ust != 0) {
             string name = table_name + "_ust_" + to_string(level);
-            plaintable_rtl(file_path, name, t_ust);
+            plaintable_rtl(file_path, name, t_ust, true, w_ust);
         }
-        if(level == max_level && w_bias != 0)
-        {
+        if (level == max_level && w_bias != 0) {
             string name = table_name + "_bias_" + to_string(level);
-            plaintable_rtl(file_path, name, t_bias);
+            plaintable_rtl(file_path, name, t_bias, true, w_bias);
         }
         if (w_idx != 0) 
         {
             string name = table_name + "_idx_" + to_string(level);
-            plaintable_rtl(file_path, name, t_idx);
+            plaintable_rtl(file_path, name, t_idx, false, 0);
         }
         if (w_rsh != 0) 
         {
             string name = table_name + "_rsh_" + to_string(level);
-            plaintable_rtl(file_path, name, t_rsh);
+            plaintable_rtl(file_path, name, t_rsh, false, 0);
         }
         if (w_lb != 0) 
         {
             string name = table_name + "_lb_" + to_string(level);
-            plaintable_rtl(file_path, name, t_lb);
+            plaintable_rtl(file_path, name, t_lb, false, 0);
         }
 
         ofstream file(file_path, ios::app);
@@ -531,12 +476,17 @@ void compressedlut::rtl(const string& file_path, const string& table_name, const
 
 }
 
-void compressedlut::plaintable_rtl(const string& file_path, const string& table_name, const vector<long int>& table_data) 
+void compressedlut::plaintable_rtl(const string& file_path, const string& table_name, const vector<long int>& table_data, bool set, const int width) 
 {
     ofstream file(file_path, ios::app);
-
+    int w_out = 0;
     int w_in = bit_width(table_data.size() - 1);
-    int w_out = bit_width(*max_element(table_data.begin(), table_data.end()));
+    if (set) {
+        w_out = width;
+    }
+    else {
+        w_out = bit_width(*max_element(table_data.begin(), table_data.end()));
+    }
 
     file << "\nmodule " << table_name << "(address, data);\n";
     file << "input wire [" << w_in - 1 << ":0] address;\n";
@@ -550,164 +500,6 @@ void compressedlut::plaintable_rtl(const string& file_path, const string& table_
     }
     file << "\t\tdefault: data = " << w_out << "'d0" << ";\n\tendcase\nend\n";
     file << "endmodule\n";
-
-    file.close();
-}
-
-
-void compressedlut::hls(const string& file_path, const string& table_name, const vector<int>& all_w_in, const vector<int>& all_w_out, const vector<int>& all_w_l, const vector<int>& all_w_s, const vector<vector<long int>>& all_t_lb, const vector<vector<long int>>& all_t_ust, const vector<vector<long int>>& all_t_bias, const vector<vector<long int>>& all_t_idx, const vector<vector<long int>>& all_t_rsh, int max_level)
-{
-    ofstream file(file_path);
-    file << "#include <ap_int.h>\n";
-    file.close();
-
-    for (int level = max_level; level >= 1; level--) 
-    {
-        const vector<long int> t_lb = all_t_lb.at(level-1);
-        const vector<long int> t_ust = all_t_ust.at(level-1);
-        const vector<long int> t_bias = all_t_bias.at(level-1);
-        const vector<long int> t_idx = all_t_idx.at(level-1);
-        const vector<long int> t_rsh = all_t_rsh.at(level-1);
-
-        const int w_in = all_w_in.at(level-1);
-        const int w_out = all_w_out.at(level-1);
-        const int w_l = all_w_l.at(level-1);
-        const int w_s = all_w_s.at(level-1);
-
-        const int w_lb = (t_lb.size() == 0)? 0 : bit_width(*max_element(t_lb.begin(), t_lb.end()));
-        const int w_ust = (t_ust.size() == 0)? 0 : bit_width(*max_element(t_ust.begin(), t_ust.end()));
-        const int w_bias = (t_bias.size() == 0)? 0 : bit_width(*max_element(t_bias.begin(), t_bias.end()));
-        const int w_idx = (t_idx.size() == 0)? 0 : bit_width(*max_element(t_idx.begin(), t_idx.end()));
-        const int w_rsh = (t_rsh.size() == 0)? 0 : bit_width(*max_element(t_rsh.begin(), t_rsh.end()));
-        
-        file.open(file_path, ios::app);
-
-        if(level == 1)
-            file << "\nvoid " << table_name << "(ap_uint<" << w_in << "> address, ap_uint<" << w_out << ">* data) {\n";
-        else 
-            file << "\nvoid " << table_name << "_" << level << "(ap_uint<" << w_in << "> address, ap_uint<" << w_out << ">* data) {\n";
-
-        file << "\t#pragma HLS PIPELINE\n";
-
-        file.close();
-
-        if(w_ust != 0) 
-        {
-            string name = table_name + "_ust_" + to_string(level);
-            plaintable_hls(file_path, name, t_ust);
-        }
-        if(level == max_level && w_bias != 0)
-        {
-            string name = table_name + "_bias_" + to_string(level);
-            plaintable_hls(file_path, name, t_bias);
-        }
-        if (w_idx != 0) 
-        {
-            string name = table_name + "_idx_" + to_string(level);
-            plaintable_hls(file_path, name, t_idx);
-        }
-        if (w_rsh != 0) 
-        {
-            string name = table_name + "_rsh_" + to_string(level);
-            plaintable_hls(file_path, name, t_rsh);
-        }
-        if (w_lb != 0) 
-        {
-            string name = table_name + "_lb_" + to_string(level);
-            plaintable_hls(file_path, name, t_lb);
-        }
-
-        file.open(file_path, ios::app);
-
-        file << "\n";
-
-        if(w_idx != 0)
-            file << "\tap_uint<" << w_idx << "> i = " << table_name << "_idx_" << level  << "[address.range(" << w_in - 1 << ", " << w_s << ")];\n";
-      
-        if (w_rsh != 0)
-            file << "\tap_uint<" << w_rsh << "> t = " << table_name << "_rsh_" << level  << "[address.range(" << w_in - 1 << ", " << w_s << ")];\n";
-
-        if (w_bias != 0) 
-        {
-            if (level == max_level) 
-            {
-                file << "\tap_uint<" << w_bias << "> b = " << table_name << "_bias_" << level  << "[address.range(" << w_in - 1 << ", " << w_s << ")];\n";
-            }
-            else
-            {
-                file << "\tap_uint<" << w_bias << "> b; " << table_name << "_" << level+1  << "(address.range(" << w_in - 1 << ", " << w_s << "), &b);\n";
-            }
-        }
-
-        if (w_lb != 0)
-            file << "\tap_uint<" << w_lb << "> lb = " << table_name << "_lb_" << level  << "[address];\n";
-
-        if (w_ust != 0) 
-        {
-            if (w_idx != 0) 
-            {
-                file << "\tap_uint<" << w_idx+w_s << "> ust_idx; ust_idx.range(" << w_idx+w_s-1 << ", " << w_s << ") = i; ust_idx.range(" << w_s-1 << ", 0) = address.range(" << w_s-1 <<", 0); ";
-                file << "ap_uint<" << w_ust << "> u = " << table_name << "_ust_" << level  << "[ust_idx];\n";
-            }
-            else 
-            {
-                if(t_idx.size() == 0)
-                    file << "\tap_uint<" << w_ust << "> u = " << table_name << "_ust_" << level  << "[address];\n";
-                else
-                    file << "\tap_uint<" << w_ust << "> u = " << table_name << "_ust_" << level  << "[" << "address.range(" << w_s-1 <<", 0)" <<"];\n";
-            }
-        }
-
-        if (w_l != 0)
-            file << "\tap_uint<" << w_out << "> data_t; data_t.range(" << w_out-1 <<", " << w_l <<") = ";
-        else 
-            file << "\tap_uint<" << w_out << "> data_t = ";
-        
-        if (w_ust != 0 && w_rsh != 0 && w_bias != 0)
-            file << "(u >> t) + b;\n";
-        else if (w_ust != 0 && w_rsh != 0 && w_bias == 0) 
-            file << "(u >> t);\n";
-        else if (w_ust != 0 && w_rsh == 0 && w_bias != 0)
-            file << "u + b;\n";
-        else if (w_ust != 0 && w_rsh == 0 && w_bias == 0)
-            file << "u;\n";
-        else if (w_ust == 0 && w_bias != 0)
-            file << "b;\n";
-        else 
-            file << "0;\n";
-
-        if (w_l != 0) 
-        {   if(w_lb != 0)
-                file << "\tdata_t.range(" << w_l-1 <<", 0) = lb;\n";
-            else
-                file << "\tdata_t.range(" << w_l-1 <<", 0) = 0;\n";
-        }
-
-        file << "\n\t*data = data_t;\n}\n";
-
-        file.close();
-    }
-
-}
-
-void compressedlut::plaintable_hls(const string& file_path, const string& table_name, const vector<long int>& table_data) 
-{
-    ofstream file(file_path, ios::app);
-
-    int w_in = bit_width(table_data.size() - 1);
-    int w_out = bit_width(*max_element(table_data.begin(), table_data.end()));
-
-    file << "\n\tconst ap_uint<" << w_out << "> " << table_name << "[" << table_data.size() << "] = {";
-    for (long int i = 0; i < table_data.size(); i++) 
-    {
-        file << table_data.at(i);
-        if(i == (table_data.size()-1))
-            file << "};\n";
-        else
-            file << ", ";
-    }
-
-    file << "\t#pragma HLS bind_storage variable=" << table_name << " type=ROM_1P impl=lutram\n";
 
     file.close();
 }

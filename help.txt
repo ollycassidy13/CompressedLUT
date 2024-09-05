@@ -1,11 +1,11 @@
 Instructions
 -------------------------------------------------------------------
 This program generates source code  for  univariate  functions.  It 
-works in two modes: you can either (1) specify  a  text  file  that 
+works by the user specifing  a  text  file  that 
 contains the values of a lookup table specifying  f(x)  for  all  x 
-values, or (2) describe the function by providing its equation.
+values
 
-1) Lookup table as a text File -->  Please  specify  the  following 
+Lookup table as a text File -->  Please  specify  the  following 
    arguments:
 	-table (string)		: path of  the  table,   in   which 
 	                          each   line    has    a    single   
@@ -15,21 +15,6 @@ values, or (2) describe the function by providing its equation.
 	                          determined  based  on  the  table 
 	                          size  and  the  maximum  absolute    
 	                          value of the table, respectively.
-	
-2) Lookup table as a math equation --> Please specify the following 
-   arguments:
-	-function (string)	: function's    equation    as    a 
-	                          string in quotation marks "".
-	-f_in (int)		: fractional  bit  width   of   the 
-                                  function's   input.   Since   the 
-                                  function is evaluated in  [0, 1),
-                                  there are  no  integer  bits  for 
-                                  the input.
-	-f_out (int)		: fractional  bit  width   of   the 
-	                          function's output. The signedness 
-	                          and  integer  bit  width  of  the 
-	                          output       are       determined 
-	                          automatically.
 
 The following optional arguments can be used in either mode.
 	-name (string)		: output table and file name.
